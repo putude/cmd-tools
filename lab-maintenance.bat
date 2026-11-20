@@ -4,6 +4,7 @@ title Lab PC Maintenance
 set "SELF=%~f0"
 set "RUN_DEFRAG=0"
 set "RUN_DEEP=0"
+set "LITE_SERVICES=1"
 
 :: ---------- Auto elevate ----------
 net session >nul 2>&1
@@ -16,6 +17,7 @@ call :browsers
 call :apps
 call :bloat
 call :optimise
+call :performance
 if "%RUN_DEEP%"=="1" (
     sfc /scannow
     dism /online /Cleanup-Image /RestoreHealth
@@ -72,11 +74,7 @@ del /f /s /q "%SystemRoot%\Prefetch\*" >nul 2>&1
 rd /s /q "%SystemDrive%\$Recycle.Bin" >nul 2>&1
 ipconfig /flushdns >nul
 
-:: Power: high performance, no sleep, hibernate/fast startup off
-powercfg /setactive SCHEME_MIN >nul 2>&1
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
-powercfg /change monitor-timeout-ac 30
+:: Hibernate + fast startup off (power plan diatur di :performance)
 powercfg -h off
 
 :: Policy: telemetry, ads, game dvr
@@ -96,6 +94,80 @@ for %%S in (DiagTrack dmwappushservice XblAuthManager XblGameSave XboxNetApiSvc 
 
 :: TRIM (SSD) / defrag (HDD) otomatis
 if "%RUN_DEFRAG%"=="1" defrag %SystemDrive% /O
+exit /b
+
+:performance
+echo [*] Performa maksimum + tampilan ringan...
+
+:: ---- Power plan: High performance (fallback Ultimate) ----
+powercfg /setactive SCHEME_MIN >nul 2>&1 || (
+    for /f "tokens=4" %%G in ('powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2^>nul') do powercfg /setactive %%G
+)
+for %%X in (setacvalueindex setdcvalueindex) do (
+    rem CPU: 100% min/max, turbo agresif, core parking off, pendingin aktif
+    powercfg /%%X SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN 100 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX 100 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_PROCESSOR PERFBOOSTMODE 2 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 100 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_PROCESSOR SYSCOOLPOL 1 >nul 2>&1
+    rem Sleep / hibernate / monitor / disk / lock = NEVER
+    powercfg /%%X SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_SLEEP HYBRIDSLEEP 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_VIDEO VIDEOCONLOCK 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_DISK DISKIDLE 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 >nul 2>&1
+    rem PCIe link power & USB selective suspend off
+    powercfg /%%X SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0 >nul 2>&1
+    powercfg /%%X SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0 >nul 2>&1
+)
+powercfg /change standby-timeout-ac 0
+powercfg /change standby-timeout-dc 0
+powercfg /change monitor-timeout-ac 0
+powercfg /change monitor-timeout-dc 0
+powercfg /change disk-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+powercfg /setactive SCHEME_CURRENT >nul 2>&1
+
+:: ---- CPU scheduler / throttling ----
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl" /v Win32PrioritySeparation /t REG_DWORD /d 38 /f >nul
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling" /v PowerThrottlingOff /t REG_DWORD /d 1 /f >nul
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f >nul
+fsutil behavior set disablelastaccess 1 >nul 2>&1
+
+:: ---- Background apps & P2P update off ----
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v LetAppsRunInBackground /t REG_DWORD /d 2 /f >nul
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" /v DODownloadMode /t REG_DWORD /d 0 /f >nul
+
+:: ---- Browser: jangan jalan di background / startup boost ----
+for %%P in ("Google\Chrome" "Microsoft\Edge") do (
+    reg add "HKLM\SOFTWARE\Policies\%%~P" /v StartupBoostEnabled /t REG_DWORD /d 0 /f >nul
+    reg add "HKLM\SOFTWARE\Policies\%%~P" /v BackgroundModeEnabled /t REG_DWORD /d 0 /f >nul
+)
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v HideFirstRunExperience /t REG_DWORD /d 1 /f >nul
+
+:: ---- Service ringan (HDD/SSD lab): Search index, SysMain, error reporting, fax ----
+if "%LITE_SERVICES%"=="1" (
+    for %%S in (SysMain WSearch WerSvc Fax) do (
+        sc stop %%S >nul 2>&1
+        sc config %%S start= disabled >nul 2>&1
+    )
+)
+
+:: ---- Defender: scan hanya saat idle, CPU rendah ----
+powershell -NoProfile -Command "try{Set-MpPreference -ScanOnlyIfIdleEnabled $true -ScanAvgCPULoadFactor 20 -EnableLowCpuPriority $true -ErrorAction Stop}catch{}"
+
+:: ---- Log & dump ----
+for /f "tokens=*" %%L in ('wevtutil el') do wevtutil cl "%%L" >nul 2>&1
+del /f /q "%SystemRoot%\MEMORY.DMP" >nul 2>&1
+del /f /s /q "%SystemRoot%\Minidump\*" >nul 2>&1
+del /f /s /q "%ProgramData%\Microsoft\Windows\WER\*" >nul 2>&1
+
+:: ---- Per-user: wallpaper solid biru, efek visual off, startup browser off ----
+call :runps HKCU
+call :runps STARTUP
+call :runps DESKTOP
 exit /b
 
 :: =====================================================
@@ -224,4 +296,145 @@ foreach ($u in $users) {
 Clear-Dir "$env:SystemRoot\Temp"
 Clear-Dir $env:TEMP
 Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+Get-PSDrive -PSProvider FileSystem | ForEach-Object { Remove-Item (Join-Path $_.Root '$Recycle.Bin') -Recurse -Force -ErrorAction SilentlyContinue }
 #END TEMP
+
+#BEGIN HKCU
+$runPat = 'MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch|chrome|firefox|msedge|opera|OneDrive|Teams|Spotify|Discord|Skype|Steam|Kingsoft|WPS|Roblox'
+
+function Set-V($root, $path, $name, $val, $type = 'DWord') {
+    $k = "Registry::$root\$path"
+    if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+    New-ItemProperty -Path $k -Name $name -Value $val -PropertyType $type -Force | Out-Null
+}
+
+function Apply-User($r) {
+    # --- Wallpaper: kosong + solid color biru Windows (0,120,215) ---
+    Set-V $r 'Control Panel\Desktop' 'Wallpaper' '' 'String'
+    Set-V $r 'Control Panel\Colors' 'Background' '0 120 215' 'String'
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers' 'BackgroundType' 1
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop' 'NoChangingWallPaper' 1
+
+    # --- Efek visual: best performance ---
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 2
+    Set-V $r 'Control Panel\Desktop' 'UserPreferencesMask' ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) 'Binary'
+    Set-V $r 'Control Panel\Desktop' 'DragFullWindows' '0' 'String'
+    Set-V $r 'Control Panel\Desktop' 'MenuShowDelay' '0' 'String'
+    Set-V $r 'Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' 'String'
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarAnimations' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ListviewAlphaSelect' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ListviewShadow' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'IconsOnly' 1
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarMn' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowTaskViewButton' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 0
+    Set-V $r 'Software\Microsoft\Windows\DWM' 'EnableAeroPeek' 0
+    Set-V $r 'Software\Microsoft\Windows\DWM' 'AlwaysHibernateThumbnails' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsDynamicSearchBoxEnabled' 0
+
+    # --- Screensaver off ---
+    Set-V $r 'Control Panel\Desktop' 'ScreenSaveActive' '0' 'String'
+    Set-V $r 'Control Panel\Desktop' 'ScreenSaverIsSecure' '0' 'String'
+
+    # --- Game bar / DVR off ---
+    Set-V $r 'System\GameConfigStore' 'GameDVR_Enabled' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' 0
+
+    # --- Background apps, tips, suggestion, auto-install app off ---
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled' 1
+    $cdm = 'Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+    foreach ($n in 'ContentDeliveryAllowed','OemPreInstalledAppsEnabled','PreInstalledAppsEnabled','PreInstalledAppsEverEnabled','SilentInstalledAppsEnabled','SoftLandingEnabled','SystemPaneSuggestionsEnabled','RotatingLockScreenEnabled','SubscribedContent-310093Enabled','SubscribedContent-338387Enabled','SubscribedContent-338388Enabled','SubscribedContent-338389Enabled','SubscribedContent-353694Enabled','SubscribedContent-353696Enabled') {
+        Set-V $r $cdm $n 0
+    }
+
+    # --- Hapus auto-start browser & app liar dari Run milik user ---
+    $rk = "Registry::$r\Software\Microsoft\Windows\CurrentVersion\Run"
+    if (Test-Path $rk) {
+        (Get-Item $rk).GetValueNames() | Where-Object { $_ -match $runPat } | ForEach-Object { Remove-ItemProperty $rk -Name $_ -ErrorAction SilentlyContinue }
+    }
+}
+
+$profiles = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSChildName -like 'S-1-5-21-*' -and $_.ProfileImagePath -like '*\Users\*' }
+
+foreach ($pf in $profiles) {
+    $sid = $pf.PSChildName
+    $dat = Join-Path $pf.ProfileImagePath 'NTUSER.DAT'
+    Write-Host "  user: $($pf.ProfileImagePath)"
+    if (Test-Path "Registry::HKEY_USERS\$sid") {
+        Apply-User "HKEY_USERS\$sid"
+    } elseif ([IO.File]::Exists($dat)) {
+        reg load HKU\LabTmp "$dat" | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Apply-User 'HKEY_USERS\LabTmp'
+            [gc]::Collect(); Start-Sleep -Milliseconds 500
+            reg unload HKU\LabTmp | Out-Null
+        }
+    }
+    Remove-Item "$($pf.ProfileImagePath)\AppData\Roaming\Microsoft\Windows\Themes\TranscodedWallpaper" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$($pf.ProfileImagePath)\AppData\Roaming\Microsoft\Windows\Themes\CachedFiles" -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Profil Default (untuk user baru)
+$def = 'C:\Users\Default\NTUSER.DAT'
+if ([IO.File]::Exists($def)) {
+    reg load HKU\LabDef "$def" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Apply-User 'HKEY_USERS\LabDef'
+        [gc]::Collect(); Start-Sleep -Milliseconds 500
+        reg unload HKU\LabDef | Out-Null
+    }
+}
+
+# Terapkan wallpaper kosong ke sesi yang sedang aktif
+try {
+    Add-Type -Namespace LabW -Name N -MemberDefinition '[DllImport("user32.dll",CharSet=CharSet.Auto)] public static extern int SystemParametersInfo(int a,int b,string c,int d);'
+    [LabW.N]::SystemParametersInfo(20, 0, '', 3) | Out-Null
+} catch {}
+#END HKCU
+
+#BEGIN STARTUP
+$bpat = 'chrome|firefox|msedge|edge|opera|MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch'
+
+# Run key sistem
+foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run') {
+    if (Test-Path $k) {
+        (Get-Item $k).GetValueNames() | Where-Object { $_ -match $bpat } | ForEach-Object { Remove-ItemProperty $k -Name $_ -ErrorAction SilentlyContinue; Write-Host "  hapus startup: $_" }
+    }
+}
+
+# Folder Startup (semua user + per user)
+$dirs = @('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp')
+$dirs += Get-ChildItem C:\Users -Directory -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName)\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup" }
+foreach ($d in $dirs) {
+    if (Test-Path $d) {
+        Get-ChildItem $d -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $bpat } | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Scheduled task yang membuka browser saat logon
+Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'AutoLaunch' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+#END STARTUP
+
+#BEGIN DESKTOP
+$sh = New-Object -ComObject WScript.Shell
+$desks = @('C:\Users\Public\Desktop')
+Get-ChildItem C:\Users -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin 'Default','Default User','All Users' } | ForEach-Object {
+    $desks += "$($_.FullName)\Desktop"
+    $desks += (Get-ChildItem $_.FullName -Directory -Filter 'OneDrive*' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName)\Desktop" })
+}
+foreach ($d in $desks) {
+    if (-not (Test-Path $d)) { continue }
+    Get-ChildItem $d -Filter *.lnk -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $tp = [Environment]::ExpandEnvironmentVariables($sh.CreateShortcut($_.FullName).TargetPath)
+            if ($tp -and -not (Test-Path -LiteralPath $tp)) {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                Write-Host "  deadlink: $($_.FullName)"
+            }
+        } catch {}
+    }
+}
+#END DESKTOP
