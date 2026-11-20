@@ -282,10 +282,26 @@ $bloat = @(
  '*CandyCrush*','king.com.*','*TikTok*','*Disney*','*Spotify*','*Netflix*','*Facebook*',
  '*Instagram*','*Twitter*','*LinkedIn*','*Amazon*','*Dropbox*','*Hulu*','*PrimeVideo*'
 )
+$ErrorActionPreference = 'SilentlyContinue'
 foreach ($b in $bloat) {
-    Write-Host "  cek: $b"
-    Get-AppxPackage -AllUsers -Name $b -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-    Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like $b } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+    # skip app inti Windows (NonRemovable) & framework supaya tidak muncul error "Removal failed"
+    Get-AppxPackage -AllUsers -Name $b | Where-Object { -not $_.NonRemovable -and -not $_.IsFramework } | ForEach-Object {
+        try {
+            Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction Stop
+            Write-Host "  hapus: $($_.Name)"
+        } catch {
+            # fallback: registrasi sisa/rusak (mis. 0x80070002) kadang bisa dihapus tanpa -AllUsers
+            try {
+                Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop
+                Write-Host "  hapus (fallback): $($_.Name)"
+            } catch {
+                Write-Host "  skip (dipakai sistem): $($_.Name)"
+            }
+        }
+    }
+    Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $b } | ForEach-Object {
+        try { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction Stop | Out-Null } catch {}
+    }
 }
 #END BLOAT
 
