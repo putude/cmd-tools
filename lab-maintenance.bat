@@ -33,7 +33,7 @@ call :runps BROWSERS
 exit /b
 
 :apps
-echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot)...
+echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot, TLauncher)...
 call :runps APPS
 call :onedrive
 exit /b
@@ -202,10 +202,13 @@ foreach ($u in $users) {
 #END BROWSERS
 
 #BEGIN APPS
-$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*'
+$DelMinecraft = $true   # hapus juga folder .minecraft (world/mod/profil TLauncher); set $false untuk menyimpan
+$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*','TLauncher*'
 
 # stop proses & service
-Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray|TLauncher.*)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
+# Minecraft (java/javaw) yang dijalankan TLauncher
+Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object { $_.CommandLine -match 'tlauncher|\.minecraft' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-Service | Where-Object { $_.Name -match '^RAV' -or $_.DisplayName -match '^RAV' } | ForEach-Object { Stop-Service $_ -Force -ErrorAction SilentlyContinue }
 
 # uninstall silent (install system-wide)
@@ -243,13 +246,15 @@ foreach ($u in $users) {
         "$p\AppData\Local\Programs\Opera", "$p\AppData\Local\Programs\Opera GX",
         "$p\AppData\Roaming\Opera Software", "$p\AppData\Local\Opera Software",
         "$p\AppData\Local\Roblox", "$p\AppData\Local\Kingsoft", "$p\AppData\Roaming\kingsoft",
-        "$p\AppData\Local\Riot Games", "$p\AppData\Local\VALORANT"
+        "$p\AppData\Local\Riot Games", "$p\AppData\Local\VALORANT",
+        "$p\AppData\Roaming\.tlauncher", "$p\AppData\Roaming\TLauncher", "$p\AppData\Local\TLauncher"
     )
+    if ($DelMinecraft) { $dirs += "$p\AppData\Roaming\.minecraft" }
     foreach ($d in $dirs) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  hapus: $d" } }
     Get-ChildItem "$p\Desktop","$p\OneDrive\Desktop","$p\AppData\Roaming\Microsoft\Windows\Start Menu\Programs" -Recurse -Include *.lnk -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match 'Opera|Roblox|WPS|Riot|VALORANT' } | Remove-Item -Force -ErrorAction SilentlyContinue
+        Where-Object { $_.Name -match 'Opera|Roblox|WPS|Riot|VALORANT|TLauncher' } | Remove-Item -Force -ErrorAction SilentlyContinue
 }
-$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games")
+$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games", "$env:ProgramFiles\TLauncher", "${env:ProgramFiles(x86)}\TLauncher")
 foreach ($d in $sys) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue } }
 # C:\Riot Games / D:\Riot Games dst (Valorant + Riot Client)
 Get-PSDrive -PSProvider FileSystem | ForEach-Object {
@@ -257,14 +262,14 @@ Get-PSDrive -PSProvider FileSystem | ForEach-Object {
     if (Test-Path $rg) { Remove-Item $rg -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  hapus: $rg" }
 }
 Get-ChildItem "C:\Users\Public\Desktop","C:\ProgramData\Microsoft\Windows\Start Menu\Programs" -Recurse -Include *.lnk -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match 'Opera|Roblox|WPS|^RAV|Riot|VALORANT' } | Remove-Item -Force -ErrorAction SilentlyContinue
+    Where-Object { $_.Name -match 'Opera|Roblox|WPS|^RAV|Riot|VALORANT|TLauncher' } | Remove-Item -Force -ErrorAction SilentlyContinue
 
 # scheduled task updater
-Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Opera|Roblox|WPS|Kingsoft|^RAV|Riot|VALORANT|Vanguard' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Opera|Roblox|WPS|Kingsoft|^RAV|Riot|VALORANT|Vanguard|TLauncher' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
 
 # startup entries
 foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run') {
-    $props = (Get-ItemProperty $k -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -match 'Opera|WPS|Kingsoft|Roblox|^RAV|OneDrive|Riot|VALORANT|vgtray' -and $_.Name -notmatch '^PS' }
+    $props = (Get-ItemProperty $k -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -match 'Opera|WPS|Kingsoft|Roblox|^RAV|OneDrive|Riot|VALORANT|vgtray|TLauncher' -and $_.Name -notmatch '^PS' }
     foreach ($x in $props) { Remove-ItemProperty $k -Name $x.Name -ErrorAction SilentlyContinue }
 }
 #END APPS
@@ -328,7 +333,7 @@ Get-PSDrive -PSProvider FileSystem | ForEach-Object { Remove-Item (Join-Path $_.
 #END TEMP
 
 #BEGIN HKCU
-$runPat = 'MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch|chrome|firefox|msedge|opera|OneDrive|Teams|Spotify|Discord|Skype|Steam|Kingsoft|WPS|Roblox|Riot|vgtray'
+$runPat = 'MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch|chrome|firefox|msedge|opera|OneDrive|Teams|Spotify|Discord|Skype|Steam|Kingsoft|WPS|Roblox|Riot|vgtray|TLauncher'
 
 function Set-V($root, $path, $name, $val, $type = 'DWord') {
     $k = "Registry::$root\$path"
