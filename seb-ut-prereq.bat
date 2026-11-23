@@ -20,7 +20,7 @@ for %%P in (Zoom.exe CptHost.exe zoom_launcher.exe AnyDesk.exe UltraViewer_Deskt
 )
 
 echo.
-echo [2/5] Uninstall Zoom, AnyDesk, UltraViewer, Chrome Remote Desktop...
+echo [2/5] Uninstall remote tools + disable startup apps...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((Get-Content -LiteralPath '%~f0' -Raw) -split ('#'+'PS#'))[1]"
 
 echo.
@@ -112,4 +112,64 @@ Get-ChildItem 'C:\Users' -Directory | ForEach-Object {
 foreach ($d in $dirs) {
     if (Test-Path $d) { Remove-Item $d -Recurse -Force; Write-Host "Hapus folder: $d" }
 }
+# --- Disable semua startup apps (reversible, sama seperti Task Manager > Startup) ---
+# Item yang namanya cocok dengan $keep TIDAK disentuh. Edit sesuai kebutuhan.
+$keep = 'SecurityHealth|Defender|DeepFreeze|Deep Freeze|Faronics|maintenance'
+$dis  = [byte[]](3,0,0,0,0,0,0,0,0,0,0,0)
+
+function Set-Disabled($approvedPath, $name) {
+    if (-not (Test-Path $approvedPath)) { New-Item $approvedPath -Force | Out-Null }
+    Set-ItemProperty -Path $approvedPath -Name $name -Value $dis -Type Binary
+    Write-Host "Disable startup: $name"
+}
+
+function Disable-Hive($root, $startupDir) {
+    $ap = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+    $runs = @(
+        @("$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "$ap\Run"),
+        @("$root\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "$ap\Run32")
+    )
+    foreach ($r in $runs) {
+        if (Test-Path $r[0]) {
+            foreach ($n in (Get-Item $r[0]).Property) {
+                if ($n -notmatch $keep) { Set-Disabled $r[1] $n }
+            }
+        }
+    }
+    if ($startupDir -and (Test-Path $startupDir)) {
+        Get-ChildItem $startupDir -File -Force | Where-Object { $_.Name -ne 'desktop.ini' -and $_.Name -notmatch $keep } | ForEach-Object {
+            Set-Disabled "$ap\StartupFolder" $_.Name
+        }
+    }
+}
+
+# Machine-wide
+Disable-Hive 'HKLM:' 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp'
+
+# User yang hive-nya tidak sedang loaded (load sementara NTUSER.DAT)
+Get-ChildItem 'C:\Users' -Directory -Force | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" } | ForEach-Object {
+    reg load 'HKU\SEBTMP' "$($_.FullName)\NTUSER.DAT" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Disable-Hive 'Registry::HKEY_USERS\SEBTMP' "$($_.FullName)\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+        [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+        reg unload 'HKU\SEBTMP' 2>$null | Out-Null
+    }
+}
+
+# User yang sedang loaded (login aktif)
+Get-ChildItem 'Registry::HKEY_USERS' | Where-Object { $_.PSChildName -match '^S-1-(5-21|12-1)-[\d-]+$' } | ForEach-Object {
+    $sid = $_.PSChildName
+    $pp = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid").ProfileImagePath
+    Disable-Hive "Registry::HKEY_USERS\$sid" "$pp\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+}
+
+# Scheduled task non-Microsoft dengan trigger logon/boot
+Get-ScheduledTask | Where-Object {
+    $_.TaskPath -notlike '\Microsoft\*' -and $_.State -ne 'Disabled' -and $_.TaskName -notmatch $keep -and
+    ($_.Triggers | Where-Object { $_.CimClass.CimClassName -match 'Logon|Boot' })
+} | ForEach-Object {
+    Disable-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath | Out-Null
+    Write-Host "Disable task: $($_.TaskPath)$($_.TaskName)"
+}
+
 #PS#
