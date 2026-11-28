@@ -33,7 +33,7 @@ call :runps BROWSERS
 exit /b
 
 :apps
-echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot, TLauncher, Avast, Brave)...
+echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot, TLauncher, Avast, Brave, Total360)...
 call :runps APPS
 call :onedrive
 exit /b
@@ -47,6 +47,7 @@ reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v DisableWindow
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Chat" /v ChatIcon /t REG_DWORD /d 3 /f >nul
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f >nul
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" /v EnableFeeds /t REG_DWORD /d 0 /f >nul
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot" /v TurnOffWindowsCopilot /t REG_DWORD /d 1 /f >nul
 exit /b
 
 :onedrive
@@ -118,6 +119,8 @@ for %%X in (setacvalueindex setdcvalueindex) do (
     powercfg /%%X SCHEME_CURRENT SUB_VIDEO VIDEOCONLOCK 0 >nul 2>&1
     powercfg /%%X SCHEME_CURRENT SUB_DISK DISKIDLE 0 >nul 2>&1
     powercfg /%%X SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 >nul 2>&1
+    rem Tombol power = Shutdown (3), bukan sleep
+    powercfg /%%X SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 >nul 2>&1
     rem PCIe link power & USB selective suspend off
     powercfg /%%X SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0 >nul 2>&1
     powercfg /%%X SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0 >nul 2>&1
@@ -203,10 +206,10 @@ foreach ($u in $users) {
 
 #BEGIN APPS
 $DelMinecraft = $true   # hapus juga folder .minecraft (world/mod/profil TLauncher); set $false untuk menyimpan
-$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*','TLauncher*','Brave*'
+$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*','TLauncher*','Brave*','360 Total Security*','Total 360*','Total360*'
 
 # stop proses & service
-Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray|TLauncher.*|brave|BraveUpdate|BraveCrashHandler.*|Avast.*|asw.*|afwServ|wsc_proxy)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray|TLauncher.*|brave|BraveUpdate|BraveCrashHandler.*|Avast.*|asw.*|afwServ|wsc_proxy|360.*|QH(ActiveDefense|SafeTray|Watchdog)|ZhuDongFangYu|SafeWrapper)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
 # Minecraft (java/javaw) yang dijalankan TLauncher
 Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object { $_.CommandLine -match 'tlauncher|\.minecraft' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-Service | Where-Object { $_.Name -match '^RAV' -or $_.DisplayName -match '^RAV' } | ForEach-Object { Stop-Service $_ -Force -ErrorAction SilentlyContinue }
@@ -243,6 +246,20 @@ Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyCon
 Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Avast' } |
     ForEach-Object { Write-Host "  hapus entry: $($_.DisplayName)"; Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue }
 
+# Total360 / 360 Total Security: fallback uninstaller (kalau loop di atas gagal), lalu bersihkan service/driver/entry sisa
+# catatan: self-protection 360 kadang memblokir uninstall silent -> matikan manual lewat UI 360 kalau masih ada sisa
+$t360 = @("${env:ProgramFiles(x86)}\360\Total Security\Uninstall.exe", "$env:ProgramFiles\360\Total Security\Uninstall.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($t360) {
+    Write-Host "  uninstall: Total360"
+    $pr = Start-Process $t360 -ArgumentList '/S' -PassThru -WindowStyle Hidden
+    if (-not $pr.WaitForExit(180000)) { $pr.Kill() }
+}
+Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^(360|QHActiveDefense|QHWatchdog|ZhuDongFangYu)' } |
+    ForEach-Object { sc.exe stop $_.PSChildName 2>&1 | Out-Null; sc.exe delete $_.PSChildName 2>&1 | Out-Null }
+Remove-Item "$env:SystemRoot\System32\drivers\360*.sys" -Force -ErrorAction SilentlyContinue
+Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^(360 (Total )?Security|Total ?360)' } |
+    ForEach-Object { Write-Host "  hapus entry: $($_.DisplayName)"; Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue }
+
 # Brave: service sisa
 Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^(brave|bravem|BraveElevationService)' } |
     ForEach-Object { sc.exe stop $_.PSChildName 2>&1 | Out-Null; sc.exe delete $_.PSChildName 2>&1 | Out-Null }
@@ -267,14 +284,15 @@ foreach ($u in $users) {
         "$p\AppData\Local\Riot Games", "$p\AppData\Local\VALORANT",
         "$p\AppData\Roaming\.tlauncher", "$p\AppData\Roaming\TLauncher", "$p\AppData\Local\TLauncher",
         "$p\AppData\Local\BraveSoftware", "$p\AppData\Roaming\BraveSoftware",
-        "$p\AppData\Local\AVAST Software", "$p\AppData\Roaming\AVAST Software"
+        "$p\AppData\Local\AVAST Software", "$p\AppData\Roaming\AVAST Software",
+        "$p\AppData\Roaming\360safe", "$p\AppData\Roaming\360TotalSecurity", "$p\AppData\Local\360Chrome"
     )
     if ($DelMinecraft) { $dirs += "$p\AppData\Roaming\.minecraft" }
     foreach ($d in $dirs) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  hapus: $d" } }
     Get-ChildItem "$p\Desktop","$p\OneDrive\Desktop","$p\AppData\Roaming\Microsoft\Windows\Start Menu\Programs" -Recurse -Include *.lnk -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match 'Opera|Roblox|WPS|Riot|VALORANT|TLauncher|Brave|Avast' } | Remove-Item -Force -ErrorAction SilentlyContinue
+        Where-Object { $_.Name -match 'Opera|Roblox|WPS|Riot|VALORANT|TLauncher|Brave|Avast|360 ?Total|Total ?360|360 ?Safe' } | Remove-Item -Force -ErrorAction SilentlyContinue
 }
-$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games", "$env:ProgramFiles\TLauncher", "${env:ProgramFiles(x86)}\TLauncher", "$env:ProgramFiles\BraveSoftware", "${env:ProgramFiles(x86)}\BraveSoftware", "$env:ProgramFiles\Avast Software", "${env:ProgramFiles(x86)}\Avast Software", "$env:ProgramData\AVAST Software")
+$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games", "$env:ProgramFiles\TLauncher", "${env:ProgramFiles(x86)}\TLauncher", "$env:ProgramFiles\BraveSoftware", "${env:ProgramFiles(x86)}\BraveSoftware", "$env:ProgramFiles\Avast Software", "${env:ProgramFiles(x86)}\Avast Software", "$env:ProgramData\AVAST Software", "${env:ProgramFiles(x86)}\360", "$env:ProgramFiles\360", "$env:ProgramData\360safe", "$env:ProgramData\360SD")
 foreach ($d in $sys) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue } }
 # C:\Riot Games / D:\Riot Games dst (Valorant + Riot Client)
 Get-PSDrive -PSProvider FileSystem | ForEach-Object {
@@ -282,14 +300,14 @@ Get-PSDrive -PSProvider FileSystem | ForEach-Object {
     if (Test-Path $rg) { Remove-Item $rg -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  hapus: $rg" }
 }
 Get-ChildItem "C:\Users\Public\Desktop","C:\ProgramData\Microsoft\Windows\Start Menu\Programs" -Recurse -Include *.lnk -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match 'Opera|Roblox|WPS|^RAV|Riot|VALORANT|TLauncher|Brave|Avast' } | Remove-Item -Force -ErrorAction SilentlyContinue
+    Where-Object { $_.Name -match 'Opera|Roblox|WPS|^RAV|Riot|VALORANT|TLauncher|Brave|Avast|360 ?Total|Total ?360|360 ?Safe' } | Remove-Item -Force -ErrorAction SilentlyContinue
 
 # scheduled task updater
-Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Opera|Roblox|WPS|Kingsoft|^RAV|Riot|VALORANT|Vanguard|TLauncher|Brave|Avast' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Opera|Roblox|WPS|Kingsoft|^RAV|Riot|VALORANT|Vanguard|TLauncher|Brave|Avast|360 ?Total|Total ?360|360 ?Safe|^360' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
 
 # startup entries
 foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run') {
-    $props = (Get-ItemProperty $k -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -match 'Opera|WPS|Kingsoft|Roblox|^RAV|OneDrive|Riot|VALORANT|vgtray|TLauncher|Brave|Avast' -and $_.Name -notmatch '^PS' }
+    $props = (Get-ItemProperty $k -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -match 'Opera|WPS|Kingsoft|Roblox|^RAV|OneDrive|Riot|VALORANT|vgtray|TLauncher|Brave|Avast|360 ?(Total|Safe|Tray|SD)|Total ?360' -and $_.Name -notmatch '^PS' }
     foreach ($x in $props) { Remove-ItemProperty $k -Name $x.Name -ErrorAction SilentlyContinue }
 }
 #END APPS
@@ -303,7 +321,7 @@ $bloat = @(
  'microsoft.windowscommunicationsapps','Microsoft.Xbox*','Microsoft.GamingApp','Microsoft.Todos',
  'Microsoft.PowerAutomateDesktop','Clipchamp.Clipchamp','MicrosoftTeams','MSTeams',
  'Microsoft.549981C3F5F10','Microsoft.WindowsMaps','Microsoft.OneConnect','Microsoft.Wallet',
- 'Microsoft.Office.OneNote','Microsoft.OutlookForWindows','Microsoft.Windows.DevHome','Microsoft.Copilot',
+ 'Microsoft.Office.OneNote','Microsoft.OutlookForWindows','Microsoft.Windows.DevHome','*Copilot*',
  '*CandyCrush*','king.com.*','*TikTok*','*Disney*','*Spotify*','*Netflix*','*Facebook*',
  '*Instagram*','*Twitter*','*LinkedIn*','*Amazon*','*Dropbox*','*Hulu*','*PrimeVideo*'
 )
@@ -353,7 +371,7 @@ Get-PSDrive -PSProvider FileSystem | ForEach-Object { Remove-Item (Join-Path $_.
 #END TEMP
 
 #BEGIN HKCU
-$runPat = 'MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch|chrome|firefox|msedge|opera|OneDrive|Teams|Spotify|Discord|Skype|Steam|Kingsoft|WPS|Roblox|Riot|vgtray|TLauncher|Brave|Avast'
+$runPat = 'MicrosoftEdgeAutoLaunch|GoogleChromeAutoLaunch|chrome|firefox|msedge|opera|OneDrive|Teams|Spotify|Discord|Skype|Steam|Kingsoft|WPS|Roblox|Riot|vgtray|TLauncher|Brave|Avast|360 ?(Total|Safe|Tray|SD)|Total ?360'
 
 function Set-V($root, $path, $name, $val, $type = 'DWord') {
     $k = "Registry::$root\$path"
@@ -381,6 +399,8 @@ function Apply-User($r) {
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarMn' 0
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowTaskViewButton' 0
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowCopilotButton' 0
+    Set-V $r 'Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 0
     Set-V $r 'Software\Microsoft\Windows\DWM' 'EnableAeroPeek' 0
     Set-V $r 'Software\Microsoft\Windows\DWM' 'AlwaysHibernateThumbnails' 0
