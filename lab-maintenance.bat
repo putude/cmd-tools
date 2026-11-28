@@ -33,7 +33,7 @@ call :runps BROWSERS
 exit /b
 
 :apps
-echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot, TLauncher, Avast, Brave, Total360)...
+echo [*] Uninstall app (Opera, Roblox, WPS, RAV, Valorant/Riot, TLauncher, Avast, Brave, Total360, Copilot, Google Play Games, Bing)...
 call :runps APPS
 call :onedrive
 exit /b
@@ -206,16 +206,16 @@ foreach ($u in $users) {
 
 #BEGIN APPS
 $DelMinecraft = $true   # hapus juga folder .minecraft (world/mod/profil TLauncher); set $false untuk menyimpan
-$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*','TLauncher*','Brave*','360 Total Security*','Total 360*','Total360*'
+$pat = 'Opera*','RAV *','WPS Office*','Roblox*','Kingsoft*','TLauncher*','Brave*','360 Total Security*','Total 360*','Total360*','Google Play Games*','Microsoft Bing*','Bing Wallpaper*','Copilot*','Microsoft Copilot*','Microsoft 365 Copilot*'
 
 # stop proses & service
-Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray|TLauncher.*|brave|BraveUpdate|BraveCrashHandler.*|Avast.*|asw.*|afwServ|wsc_proxy|360.*|QH(ActiveDefense|SafeTray|Watchdog)|ZhuDongFangYu|SafeWrapper)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process | Where-Object { $_.Name -match '^(opera|wps|wpp|et|wpscloudsvr|wpsupdate|ksolaunch|Roblox.*|RAV.*|Riot.*|VALORANT.*|vgtray|TLauncher.*|brave|BraveUpdate|BraveCrashHandler.*|Avast.*|asw.*|afwServ|wsc_proxy|360.*|QH(ActiveDefense|SafeTray|Watchdog)|ZhuDongFangYu|SafeWrapper|GooglePlayGames.*|crosvm|Copilot.*)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
 # Minecraft (java/javaw) yang dijalankan TLauncher
 Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object { $_.CommandLine -match 'tlauncher|\.minecraft' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-Service | Where-Object { $_.Name -match '^RAV' -or $_.DisplayName -match '^RAV' } | ForEach-Object { Stop-Service $_ -Force -ErrorAction SilentlyContinue }
 
 # uninstall silent (install system-wide)
-$keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+$keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','Registry::HKEY_USERS\S-1-5-21-*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
 $found = Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $n = $_.DisplayName; $n -and ($pat | Where-Object { $n -like $_ }) }
 foreach ($a in $found) {
     Write-Host "  uninstall: $($a.DisplayName)"
@@ -260,6 +260,10 @@ Remove-Item "$env:SystemRoot\System32\drivers\360*.sys" -Force -ErrorAction Sile
 Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^(360 (Total )?Security|Total ?360)' } |
     ForEach-Object { Write-Host "  hapus entry: $($_.DisplayName)"; Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue }
 
+# Google Play Games (PC): service sisa
+Get-Service | Where-Object { $_.DisplayName -match 'Google Play Games' -or $_.Name -match 'GooglePlayGames' } |
+    ForEach-Object { sc.exe stop $_.Name 2>&1 | Out-Null; sc.exe delete $_.Name 2>&1 | Out-Null }
+
 # Brave: service sisa
 Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^(brave|bravem|BraveElevationService)' } |
     ForEach-Object { sc.exe stop $_.PSChildName 2>&1 | Out-Null; sc.exe delete $_.PSChildName 2>&1 | Out-Null }
@@ -285,14 +289,14 @@ foreach ($u in $users) {
         "$p\AppData\Roaming\.tlauncher", "$p\AppData\Roaming\TLauncher", "$p\AppData\Local\TLauncher",
         "$p\AppData\Local\BraveSoftware", "$p\AppData\Roaming\BraveSoftware",
         "$p\AppData\Local\AVAST Software", "$p\AppData\Roaming\AVAST Software",
-        "$p\AppData\Roaming\360safe", "$p\AppData\Roaming\360TotalSecurity", "$p\AppData\Local\360Chrome"
+        "$p\AppData\Roaming\360safe", "$p\AppData\Roaming\360TotalSecurity", "$p\AppData\Local\360Chrome", "$p\AppData\Local\Google\Play Games"
     )
     if ($DelMinecraft) { $dirs += "$p\AppData\Roaming\.minecraft" }
     foreach ($d in $dirs) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  hapus: $d" } }
     Get-ChildItem "$p\Desktop","$p\OneDrive\Desktop","$p\AppData\Roaming\Microsoft\Windows\Start Menu\Programs" -Recurse -Include *.lnk -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match 'Opera|Roblox|WPS|Riot|VALORANT|TLauncher|Brave|Avast|360 ?Total|Total ?360|360 ?Safe' } | Remove-Item -Force -ErrorAction SilentlyContinue
 }
-$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games", "$env:ProgramFiles\TLauncher", "${env:ProgramFiles(x86)}\TLauncher", "$env:ProgramFiles\BraveSoftware", "${env:ProgramFiles(x86)}\BraveSoftware", "$env:ProgramFiles\Avast Software", "${env:ProgramFiles(x86)}\Avast Software", "$env:ProgramData\AVAST Software", "${env:ProgramFiles(x86)}\360", "$env:ProgramFiles\360", "$env:ProgramData\360safe", "$env:ProgramData\360SD")
+$sys = @("$env:ProgramFiles\Opera", "${env:ProgramFiles(x86)}\Opera", "${env:ProgramFiles(x86)}\Kingsoft", "$env:ProgramFiles\Kingsoft", "$env:ProgramFiles\Riot Vanguard", "$env:ProgramData\Riot Games", "$env:ProgramFiles\TLauncher", "${env:ProgramFiles(x86)}\TLauncher", "$env:ProgramFiles\BraveSoftware", "${env:ProgramFiles(x86)}\BraveSoftware", "$env:ProgramFiles\Avast Software", "${env:ProgramFiles(x86)}\Avast Software", "$env:ProgramData\AVAST Software", "${env:ProgramFiles(x86)}\360", "$env:ProgramFiles\360", "$env:ProgramData\360safe", "$env:ProgramData\360SD", "$env:ProgramFiles\Google\Play Games", "$env:ProgramFiles\Google\Play Games Developer Emulator", "$env:ProgramData\Google\Play Games")
 foreach ($d in $sys) { if (Test-Path $d) { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue } }
 # C:\Riot Games / D:\Riot Games dst (Valorant + Riot Client)
 Get-PSDrive -PSProvider FileSystem | ForEach-Object {
@@ -321,7 +325,7 @@ $bloat = @(
  'microsoft.windowscommunicationsapps','Microsoft.Xbox*','Microsoft.GamingApp','Microsoft.Todos',
  'Microsoft.PowerAutomateDesktop','Clipchamp.Clipchamp','MicrosoftTeams','MSTeams',
  'Microsoft.549981C3F5F10','Microsoft.WindowsMaps','Microsoft.OneConnect','Microsoft.Wallet',
- 'Microsoft.Office.OneNote','Microsoft.OutlookForWindows','Microsoft.Windows.DevHome','*Copilot*',
+ 'Microsoft.Office.OneNote','Microsoft.OutlookForWindows','Microsoft.Windows.DevHome','*Copilot*','*Bing*',
  '*CandyCrush*','king.com.*','*TikTok*','*Disney*','*Spotify*','*Netflix*','*Facebook*',
  '*Instagram*','*Twitter*','*LinkedIn*','*Amazon*','*Dropbox*','*Hulu*','*PrimeVideo*'
 )
@@ -346,6 +350,8 @@ foreach ($b in $bloat) {
         try { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction Stop | Out-Null } catch {}
     }
 }
+# diagnosa: tampilkan paket Copilot/Bing yang masih tersisa
+Get-AppxPackage -AllUsers | Where-Object { $_.Name -match 'Copilot|Bing' } | ForEach-Object { Write-Host "  MASIH ADA: $($_.PackageFullName)" }
 #END BLOAT
 
 #BEGIN TEMP
@@ -401,6 +407,8 @@ function Apply-User($r) {
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowTaskViewButton' 0
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowCopilotButton' 0
     Set-V $r 'Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
+    Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Search' 'BingSearchEnabled' 0
+    Set-V $r 'Software\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
     Set-V $r 'Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 0
     Set-V $r 'Software\Microsoft\Windows\DWM' 'EnableAeroPeek' 0
     Set-V $r 'Software\Microsoft\Windows\DWM' 'AlwaysHibernateThumbnails' 0
